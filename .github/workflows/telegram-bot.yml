@@ -1,0 +1,47 @@
+name: Elian Telegram Bot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  telegram-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Start Telegram polling
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          AGENT_MODE: poll
+          PYTHONIOENCODING: utf-8
+          LANG: C.UTF-8
+          LC_ALL: C.UTF-8
+        run: python agent.py
+
+      - name: Save memory
+        if: always()
+        run: |
+          git config user.email "agent@github.com"
+          git config user.name "AI Agent"
+          git add memory.json tasks.json .model_cooldown.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "memory update [skip ci]"
+          git pull --rebase --autostash 2>/dev/null || true
+          git push 2>/dev/null || true

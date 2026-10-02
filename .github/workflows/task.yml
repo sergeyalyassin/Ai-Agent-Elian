@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: "الأمر (مثال: jobs ai)"
+        description: "الهدف أو المهمة"
         required: true
         default: "help"
   schedule:
@@ -16,7 +16,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,6 +25,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Verify agent
+        run: |
+          python -m py_compile agent.py
+          python -m py_compile autonomous_agent.py
       - name: Run Agent
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -32,18 +36,19 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TASK: ${{ github.event.inputs.task || 'help' }}
           AGENT_MODE: ${{ github.event_name == 'schedule' && 'once' || 'command' }}
           PYTHONIOENCODING: utf-8
           LANG: C.UTF-8
           LC_ALL: C.UTF-8
-        run: python agent.py
-      - name: Save Memory
+        run: python autonomous_agent.py
+      - name: Save state
         if: always()
         run: |
           git config user.email "agent@github.com"
           git config user.name "AI Agent"
-          git add memory.json tasks.json .model_cooldown.json 2>/dev/null || true
-          git diff --staged --quiet || git commit -m "memory update [skip ci]"
+          git add memory.json tasks.json .model_cooldown.json task_state.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "agent state update [skip ci]"
           git pull --rebase --autostash 2>/dev/null || true
           git push 2>/dev/null || true

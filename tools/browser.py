@@ -11,9 +11,8 @@ def _ensure():
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
         raise RuntimeError("Playwright غير مثبت. شغل: pip install playwright && playwright install chromium") from exc
-    if not hasattr(_ensure, "_pw"):
-        _ensure._pw = sync_playwright().start()
-    _local.browser = _ensure._pw.chromium.launch(headless=True)
+    _local.pw = sync_playwright().start()
+    _local.browser = _local.pw.chromium.launch(headless=True)
     _local.page = _local.browser.new_page(viewport={"width": 1440, "height": 1000})
     _local.page.set_default_timeout(30000)
     return _local.page
@@ -52,4 +51,7 @@ def browser_close() -> dict[str, Any]:
     b=getattr(_local, "browser", None)
     if b is not None: b.close()
     _local.browser=None; _local.page=None
+    pw=getattr(_local, "pw", None)
+    if pw is not None: pw.stop()
+    _local.pw=None
     return {"closed":True}

@@ -37,6 +37,7 @@ jobs:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AGENT_FULL_ACCESS: "1"
           TASK: ${{ github.event.inputs.task || 'help' }}
           AGENT_MODE: ${{ github.event_name == 'schedule' && 'once' || 'command' }}
           PYTHONIOENCODING: utf-8

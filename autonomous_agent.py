@@ -528,7 +528,7 @@ def poll():
     me = base.tg("getMe", timeout=30)
     base.log("Real Agent polling connected @" + str(me.get("username", "")))
     resume_recoverable_tasks()
-        try:
+    while True:
             payload = {"timeout": 50}
             if offset is not None:
                 payload["offset"] = offset

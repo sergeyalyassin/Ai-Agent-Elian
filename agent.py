@@ -526,7 +526,8 @@ def cmd_jobs(arg, mem):
         jobs.sort(key=lambda j: j.get("publication_date", ""), reverse=True)
         lines = [f"<b>وظائف {q}</b> ({len(jobs)})\n"]
         for j in jobs[:8]:
-            lines.append(f"<b>{j.get('title','')}</b>\n"
-                         f"{j.get('company_name','')}\n"
-                         f"{j.get('candidate_required_location','')}\n"
-                         f"{j.ge
+    title = j.get("title", "")
+    company = j.get("company_name", "")
+    location = j.get("candidate_required_location", "")
+    url = j.get("url", "")
+    lines.append(f"<b>{title}</b>\n{company}\n{location}\n{url}")

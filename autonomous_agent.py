@@ -19,6 +19,7 @@ from typing import Any
 import agent as base
 from core.agent_loop import AgentLoop
 from core.tool_registry import ToolRegistry
+from core.policy import ExecutionPolicy
 
 ROOT = base.ROOT
 STATE_FILE = ROOT / os.getenv("AGENT_STATE_FILE", "task_state.json")
@@ -248,7 +249,7 @@ def process_read_file(**x): return read_file(**x)
 def process_self_audit(**x): return base.self_audit()
 
 
-REGISTRY = ToolRegistry()
+REGISTRY = ToolRegistry(policy=ExecutionPolicy(full_access=FULL_ACCESS))
 REGISTRY.register("list_files", process_list_files, "list workspace files", "low", True, 30)
 REGISTRY.register("self_audit", process_self_audit, "read-only inspect the workspace, Git state, workflows and tests", "low", True, 180)
 REGISTRY.register("read_file", process_read_file, "read a UTF-8 workspace file", "low", True, 30)
@@ -500,6 +501,22 @@ def handle_message(text, memory):
         parts = raw.split(maxsplit=1)
         return task_status(parts[1] if len(parts) > 1 else None)
 
+    if raw.startswith("/approve "):
+        tid = raw.split(maxsplit=1)[1].strip()
+        task = get_task(tid)
+        if not task or task.get("status") != "awaiting_approval":
+            return "لا توجد موافقة معلقة لهذه المهمة."
+        update_task(tid, status="running", approval_granted_at=iso(), pending_approval=None)
+        return resume_task(tid)
+
+    if raw.startswith("/deny "):
+        tid = raw.split(maxsplit=1)[1].strip()
+        task = get_task(tid)
+        if not task or task.get("status") != "awaiting_approval":
+            return "لا توجد موافقة معلقة لهذه المهمة."
+        update_task(tid, status="failed", error="execution denied by user", denied_at=iso(), pending_approval=None)
+        return "تم رفض العملية وإيقاف المهمة: " + tid
+
     if raw.startswith("/resume "):
         return resume_task(raw.split(maxsplit=1)[1].strip())
 
@@ -577,6 +594,7 @@ if __name__ == "__main__":
     if mode == "command":
         command_mode()
     elif mode == "once":
-        base.once()
+        resume_recoverable_tasks()
+        time.sleep(1)
     else:
         poll()

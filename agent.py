@@ -2261,7 +2261,10 @@ def process(text, memory):
 
         if command == "health":
             return health()
-\n        if command in {"selfaudit", "audit", "diagnose"}:\n            return cmd_selfaudit(arg)\n
+
+        if command in {"selfaudit", "audit", "diagnose"}:
+            return cmd_selfaudit(arg)
+
         if command == "memory":
             return memory.summary()
 

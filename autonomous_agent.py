@@ -20,6 +20,7 @@ import agent as base
 from core.agent_loop import AgentLoop
 from core.tool_registry import ToolRegistry
 from core.policy import ExecutionPolicy
+from core.decision import adaptive_next_step
 
 ROOT = base.ROOT
 STATE_FILE = ROOT / os.getenv("AGENT_STATE_FILE", "task_state.json")
@@ -319,6 +320,49 @@ def make_plan(goal, previous=None):
     return plan
 
 
+def decide_next_step(goal, results):
+    """Independent post-observation controller. It can redirect execution after evidence changes."""
+    evidence = json.dumps(results[-8:], ensure_ascii=False)[:26000]
+    prompt = (
+        "أنت وحدة التحكم التنفيذية لوكيل مستقل. بعد تنفيذ الخطوات التالية، قرر الخطوة التالية "
+        "اللازمة لتحقيق الهدف. لا تتبع الخطة القديمة بشكل أعمى. إذا تحقق الهدف أعد JSON {\\"step\\":null}. "
+        "إذا كانت هناك خطوة لازمة أعد {\\"step\\":{\\"tool\\":...,\\"input\\":{},\\"purpose\\":...,\\"verify\\":...}}. "
+        "لا تستخدم أداة غير موجودة. لا تكرر آخر عملية نفسها إلا إذا كان ذلك ضروريا بوضوح.\\n"
+        f"الهدف: {goal}\\nالأدوات: {REGISTRY.names()}\\nالدليل: {evidence}"
+    )
+    answer, _ = base.ai(
+        prompt, "agent", 1800,
+        system="أنت Controller مستقل. أخرج JSON فقط.",
+        include_memory=True,
+    )
+    if not answer:
+        return None
+    return adaptive_next_step(lambda _g, _r: answer, goal, results, REGISTRY.names())
+
+def learn_from_task(task):
+    """Store an experience lesson without modifying code or permissions."""
+    try:
+        outcome = json.dumps({
+            "goal": task.get("goal"),
+            "status": task.get("status"),
+            "results": (task.get("results") or [])[-8:],
+            "error": task.get("error")
+        }, ensure_ascii=False)[:26000]
+        answer, _ = base.ai(
+            "استخرج درسا واحدا قابلا لإعادة الاستخدام من تجربة الوكيل التالية. "
+            "لا تختلق حقائق. أعد JSON فقط: {\\"lesson\\":\\"...\\",\\"tags\\":[...]}.\\n" + outcome,
+            "learning", 1200,
+            system="أنت وحدة تعلم تجريبي. استخرج معرفة إجرائية قابلة لإعادة الاستخدام فقط.",
+            include_memory=True,
+        )
+        obj = parse_json(answer) if answer else {}
+        lesson = str(obj.get("lesson", "")).strip()
+        if lesson:
+            mem = base.Memory()
+            mem.remember("lesson", lesson, obj.get("tags") or ["task-learning"])
+    except Exception as exc:
+        base.log("learning hook error: " + base.compact(exc, 500))
+
 def verify_step(step, result, task=None):
     rule = step.get("verify", "") if isinstance(step, dict) else ""
 
@@ -394,6 +438,7 @@ def run_goal(goal, resume_id=None):
         update_task=update_task,
         plan=make_plan,
         verify=verify_step,
+        decide_next=decide_next_step,
         max_steps=MAX_STEPS,
         max_replans=MAX_REPLANS,
         max_retries=MAX_RETRIES,
@@ -406,6 +451,12 @@ def run_goal(goal, resume_id=None):
             update_task(tid, status="completed" if final else "failed",
                         verified=final, final_verified_at=iso())
             result = get_task(tid)
+        try:
+            latest = get_task(tid)
+            if latest and latest.get("status") in {"completed", "failed"}:
+                learn_from_task(latest)
+        except Exception:
+            pass
         lines = [
             f"Task: {tid}",
             f"الحالة: {result.get('status')}",

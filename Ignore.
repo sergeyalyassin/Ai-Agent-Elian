@@ -1,0 +1,4 @@
+config.json
+.security.yml
+auth.json
+*.env

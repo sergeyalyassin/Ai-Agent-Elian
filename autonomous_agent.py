@@ -19,6 +19,13 @@ from typing import Any
 import agent as base
 from core.agent_loop import AgentLoop
 from core.tool_registry import ToolRegistry
+from core.policy import ExecutionPolicy
+from core.decision import adaptive_next_step
+from core.context_manager import ContextManager
+from core.memory_system import MemorySystem
+from core.skill_system import SkillSystem
+from core.model_router import ModelRouter
+from core.scheduler import Scheduler
 
 ROOT = base.ROOT
 STATE_FILE = ROOT / os.getenv("AGENT_STATE_FILE", "task_state.json")
@@ -29,6 +36,9 @@ FULL_ACCESS = os.getenv("AGENT_FULL_ACCESS", "0") == "1"
 MAX_WORKERS = int(os.getenv("AGENT_MAX_WORKERS", "2"))
 EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="elian-agent")
 RUNNING = set()
+CONTEXTS = ContextManager(ROOT / os.getenv("AGENT_CONTEXT_FILE", "context_state.json"))
+SKILL_SYSTEM = SkillSystem(ROOT / "skills")
+MODEL_ROUTER = ModelRouter(base.model_candidates)
 
 def iso():
     return datetime.now(timezone.utc).isoformat()
@@ -50,7 +60,7 @@ def save_state(state):
     base.atomic_write(STATE_FILE, state)
 
 
-def new_task(goal):
+def new_task(goal, conversation_id=None):
     state = load_state()
     tid = f"task-{int(time.time() * 1000)}"
     state["tasks"][tid] = {
@@ -63,8 +73,15 @@ def new_task(goal):
         "replans": 0,
         "created": iso(),
         "updated": iso(),
+        "conversation_id": str(conversation_id) if conversation_id is not None else None,
+        "current_phase": "queued",
+        "evidence": [],
+        "artifacts": {},
+        "messages": [],
     }
     save_state(state)
+    if conversation_id is not None:
+        CONTEXTS.link_task_to_context(tid, str(conversation_id))
     return tid
 
 
@@ -248,7 +265,7 @@ def process_read_file(**x): return read_file(**x)
 def process_self_audit(**x): return base.self_audit()
 
 
-REGISTRY = ToolRegistry()
+REGISTRY = ToolRegistry(policy=ExecutionPolicy(full_access=FULL_ACCESS))
 REGISTRY.register("list_files", process_list_files, "list workspace files", "low", True, 30)
 REGISTRY.register("self_audit", process_self_audit, "read-only inspect the workspace, Git state, workflows and tests", "low", True, 180)
 REGISTRY.register("read_file", process_read_file, "read a UTF-8 workspace file", "low", True, 30)
@@ -317,6 +334,49 @@ def make_plan(goal, previous=None):
     plan["steps"] = steps
     return plan
 
+
+def decide_next_step(goal, results):
+    """Independent post-observation controller. It can redirect execution after evidence changes."""
+    evidence = json.dumps(results[-8:], ensure_ascii=False)[:26000]
+    prompt = (
+        "أنت وحدة التحكم التنفيذية لوكيل مستقل. بعد تنفيذ الخطوات التالية، قرر الخطوة التالية "
+        'اللازمة لتحقيق الهدف. لا تتبع الخطة القديمة بشكل أعمى. إذا تحقق الهدف أعد JSON {"step":null}. '
+        'إذا كانت هناك خطوة لازمة أعد {"step":{"tool":...,"input":{},"purpose":...,"verify":...}}. '
+        "لا تستخدم أداة غير موجودة. لا تكرر آخر عملية نفسها إلا إذا كان ذلك ضروريا بوضوح.\\n"
+        f"الهدف: {goal}\\nالأدوات: {REGISTRY.names()}\\nالدليل: {evidence}"
+    )
+    answer, _ = base.ai(
+        prompt, "agent", 1800,
+        system="أنت Controller مستقل. أخرج JSON فقط.",
+        include_memory=True,
+    )
+    if not answer:
+        return None
+    return adaptive_next_step(lambda _g, _r: answer, goal, results, REGISTRY.names())
+
+def learn_from_task(task):
+    """Store an experience lesson without modifying code or permissions."""
+    try:
+        outcome = json.dumps({
+            "goal": task.get("goal"),
+            "status": task.get("status"),
+            "results": (task.get("results") or [])[-8:],
+            "error": task.get("error")
+        }, ensure_ascii=False)[:26000]
+        answer, _ = base.ai(
+            "استخرج درسا واحدا قابلا لإعادة الاستخدام من تجربة الوكيل التالية. "
+            'لا تختلق حقائق. أعد JSON فقط: {"lesson":"...","tags":[...]}.\\n' + outcome,
+            "learning", 1200,
+            system="أنت وحدة تعلم تجريبي. استخرج معرفة إجرائية قابلة لإعادة الاستخدام فقط.",
+            include_memory=True,
+        )
+        obj = parse_json(answer) if answer else {}
+        lesson = str(obj.get("lesson", "")).strip()
+        if lesson:
+            mem = base.Memory()
+            mem.remember("lesson", lesson, obj.get("tags") or ["task-learning"])
+    except Exception as exc:
+        base.log("learning hook error: " + base.compact(exc, 500))
 
 def verify_step(step, result, task=None):
     rule = step.get("verify", "") if isinstance(step, dict) else ""
@@ -393,6 +453,7 @@ def run_goal(goal, resume_id=None):
         update_task=update_task,
         plan=make_plan,
         verify=verify_step,
+        decide_next=decide_next_step,
         max_steps=MAX_STEPS,
         max_replans=MAX_REPLANS,
         max_retries=MAX_RETRIES,
@@ -405,6 +466,12 @@ def run_goal(goal, resume_id=None):
             update_task(tid, status="completed" if final else "failed",
                         verified=final, final_verified_at=iso())
             result = get_task(tid)
+        try:
+            latest = get_task(tid)
+            if latest and latest.get("status") in {"completed", "failed"}:
+                learn_from_task(latest)
+        except Exception:
+            pass
         lines = [
             f"Task: {tid}",
             f"الحالة: {result.get('status')}",
@@ -486,19 +553,47 @@ def submit_task(tid):
     EXECUTOR.submit(_run_background, tid)
     return f"بدأت المهمة في الخلفية: {tid}\\nاستخدم /autostatus {tid} لمتابعتها."
 
+SCHEDULER = Scheduler(lambda: list(load_state().get("tasks", {}).values()), submit_task)
+
+def run_due_tasks():
+    try:
+        return SCHEDULER.run_due()
+    except Exception as exc:
+        base.log("scheduler error: " + str(exc)); return []
+
 def resume_recoverable_tasks():
     for task in load_state().get("tasks", {}).values():
         if task.get("status") in {"queued", "planning", "running", "recovering", "replanning"}:
             submit_task(task["id"])
 
-def handle_message(text, memory):
+def handle_message(text, memory, conversation_id=None):
     raw = str(text or "").strip()
     if not raw:
         return "اكتب المهمة."
 
+    if conversation_id is not None:
+        CONTEXTS.get_or_create_context(str(conversation_id))
+        CONTEXTS.add_message(str(conversation_id), str(time.time_ns()))
+
     if raw.startswith("/autostatus"):
         parts = raw.split(maxsplit=1)
         return task_status(parts[1] if len(parts) > 1 else None)
+
+    if raw.startswith("/approve "):
+        tid = raw.split(maxsplit=1)[1].strip()
+        task = get_task(tid)
+        if not task or task.get("status") != "awaiting_approval":
+            return "لا توجد موافقة معلقة لهذه المهمة."
+        update_task(tid, status="running", approval_granted_at=iso(), pending_approval=None)
+        return resume_task(tid)
+
+    if raw.startswith("/deny "):
+        tid = raw.split(maxsplit=1)[1].strip()
+        task = get_task(tid)
+        if not task or task.get("status") != "awaiting_approval":
+            return "لا توجد موافقة معلقة لهذه المهمة."
+        update_task(tid, status="failed", error="execution denied by user", denied_at=iso(), pending_approval=None)
+        return "تم رفض العملية وإيقاف المهمة: " + tid
 
     if raw.startswith("/resume "):
         return resume_task(raw.split(maxsplit=1)[1].strip())
@@ -521,7 +616,13 @@ def handle_message(text, memory):
     if raw.startswith("/"):
         return base.process(raw, memory)
 
-    tid = new_task(raw)
+    active = CONTEXTS.get_active_task(str(conversation_id)) if conversation_id is not None else None
+    if active:
+        current = get_task(active)
+        if current and current.get("status") in {"queued","planning","running","recovering","replanning","awaiting_approval"}:
+            update_task(active, messages=(current.get("messages") or [])[-49:] + [{"role":"user","text":raw,"at":iso()}])
+            return f"لديك مهمة نشطة {active} بحالة {current.get('status')}. أضفت رسالتك إلى سياقها؛ استخدم /autostatus لمتابعتها أو /resume بعد توقفها."
+    tid = new_task(raw, conversation_id=conversation_id)
     return submit_task(tid)
 def poll():
     if not base.TELEGRAM_TOKEN:
@@ -533,12 +634,14 @@ def poll():
     me = base.tg("getMe", timeout=30)
     base.log("Real Agent polling connected @" + str(me.get("username", "")))
     resume_recoverable_tasks()
+    run_due_tasks()
     while True:
         try:
             payload = {"timeout": 50}
             if offset is not None:
                 payload["offset"] = offset
 
+            run_due_tasks()
             for update in base.tg("getUpdates", payload, timeout=60) or []:
                 offset = update.get("update_id", 0) + 1
                 message = update.get("message") or {}
@@ -548,7 +651,7 @@ def poll():
                 if not text or (base.CHAT_ID and chat_id != base.CHAT_ID):
                     continue
 
-                answer = handle_message(text, memory)
+                answer = handle_message(text, memory, chat_id)
                 memory.conversation(text, answer, text.split()[0][:100])
                 memory.success("message")
                 memory.save()
@@ -577,6 +680,7 @@ if __name__ == "__main__":
     if mode == "command":
         command_mode()
     elif mode == "once":
-        base.once()
+        resume_recoverable_tasks()
+        time.sleep(1)
     else:
         poll()

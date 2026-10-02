@@ -45,7 +45,11 @@ class AutonomousTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             autonomous.shell("rm -rf /")
 
-    def test_browser_tool_is_registered(self):\n        self.assertIn("browser", autonomous.REGISTRY.names())\n\n    def test_tool_registry_contains_core_tools(self):\n        self.assertIn("shell", autonomous.REGISTRY.names())
+    def test_browser_tool_is_registered(self):
+        self.assertIn("browser", autonomous.REGISTRY.names())
+
+    def test_tool_registry_contains_core_tools(self):
+        self.assertIn("shell", autonomous.REGISTRY.names())
         self.assertIn("github", autonomous.REGISTRY.names())
         self.assertIn("delete_file", autonomous.REGISTRY.names())
 

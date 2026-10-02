@@ -112,8 +112,10 @@ class AgentLoop:
                 self._save(tid, status="failed", results=results,
                            error="replanner returned no steps")
                 return self.load_task(tid)
-            # Replanning is real: replace only the unexecuted suffix.
-            self._save(tid, plan=plan_steps, step_index=index, results=results,
+            # The planner receives completed results and is asked for the remaining work.
+            # Start the replacement plan at zero; never replay already successful steps.
+            index = 0
+            self._save(tid, plan=plan_steps, step_index=0, results=results,
                        status="running", replans=replans)
 
         final_ok = self._final_verify(goal, results)

@@ -26,7 +26,8 @@ MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "20"))
 MAX_REPLANS = int(os.getenv("AGENT_MAX_REPLANS", "3"))
 MAX_RETRIES = int(os.getenv("AGENT_MAX_RETRIES", "2"))
 FULL_ACCESS = os.getenv("AGENT_FULL_ACCESS", "0") == "1"
-MAX_WORKERS = int(os.getenv("AGENT_MAX_WORKERS", "2"))\nEXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="elian-agent")
+MAX_WORKERS = int(os.getenv("AGENT_MAX_WORKERS", "2"))
+EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="elian-agent")
 RUNNING = set()\n
 
 def iso():

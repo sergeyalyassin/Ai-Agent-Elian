@@ -2262,6 +2262,9 @@ def process(text, memory):
         if command == "health":
             return health()
 
+        if command in {"selfaudit", "audit", "diagnose"}:
+            return cmd_selfaudit(arg)
+
         if command == "memory":
             return memory.summary()
 
@@ -2502,6 +2505,145 @@ def process(text, memory):
             f"حدث خطأ في <code>{esc(command)}</code>: "
             f"{esc(str(exc)[:700])}"
         )
+
+
+
+def self_audit():
+    """Inspect the running workspace and produce evidence for self-diagnosis.
+
+    This is deliberately read-only: it inventories the repository, inspects
+    agent-critical directories/workflows, records Git state, and runs the
+    project's test suite without modifying tracked files.
+    """
+    report = {
+        "timestamp": iso(),
+        "root": str(ROOT),
+        "read_only": True,
+        "files": [],
+        "directories": {},
+        "workflows": [],
+        "git": {},
+        "tests": {},
+        "python_compile": {},
+    }
+
+    ignored = {".git", "__pycache__", ".venv", "venv", "node_modules"}
+    try:
+        for path in sorted(ROOT.rglob("*")):
+            if any(part in ignored for part in path.parts):
+                continue
+            rel = str(path.relative_to(ROOT))
+            if path.is_file():
+                report["files"].append(rel)
+        report["files"] = report["files"][:2000]
+    except Exception as exc:
+        report["files_error"] = compact(exc, 1000)
+
+    for name in ("modules", "tools", "memory", "skills", "core", ".github/workflows", "tests"):
+        path = ROOT / name
+        report["directories"][name] = (
+            sorted(
+                str(x.relative_to(ROOT))
+                for x in path.rglob("*")
+                if x.is_file() and not any(part in ignored for part in x.parts)
+            )[:500]
+            if path.exists() else []
+        )
+
+    workflow_dir = ROOT / ".github" / "workflows"
+    if workflow_dir.exists():
+        for path in sorted(workflow_dir.glob("*.y*ml")):
+            try:
+                report["workflows"].append({
+                    "path": str(path.relative_to(ROOT)),
+                    "content": path.read_text(encoding="utf-8", errors="replace")[:20000],
+                })
+            except Exception as exc:
+                report["workflows"].append({
+                    "path": str(path.relative_to(ROOT)),
+                    "error": compact(exc, 1000),
+                })
+
+    try:
+        report["git"]["status"] = subprocess.run(
+            ["git", "status", "--short", "--branch"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=20
+        ).stdout[-10000:]
+        report["git"]["branch"] = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=20
+        ).stdout.strip()
+        report["git"]["head"] = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=20
+        ).stdout.strip()
+        report["git"]["recent_commits"] = subprocess.run(
+            ["git", "log", "-8", "--oneline"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=20
+        ).stdout[-5000:]
+    except Exception as exc:
+        report["git"]["error"] = compact(exc, 1000)
+
+    try:
+        if os.getenv("AGENT_SELF_AUDIT_RUNNING"):
+            report["tests"] = {"skipped": "recursive self-audit guard"}
+        else:
+            test_env = os.environ.copy()
+            test_env["AGENT_SELF_AUDIT_RUNNING"] = "1"
+            result = subprocess.run(
+            ["python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
+                cwd=str(ROOT), env=test_env, capture_output=True, text=True, timeout=180
+            )
+            report["tests"] = {
+                "returncode": result.returncode,
+                "stdout": result.stdout[-20000:],
+                "stderr": result.stderr[-10000:],
+            }
+    except Exception as exc:
+        report["tests"] = {"error": compact(exc, 2000)}
+
+    compile_targets = ["agent.py", "autonomous_agent.py", "core/agent_loop.py", "core/tool_registry.py"]
+    for target in compile_targets:
+        path = ROOT / target
+        if not path.exists():
+            report["python_compile"][target] = "missing"
+            continue
+        try:
+            result = subprocess.run(
+                ["python", "-m", "py_compile", str(path)],
+                cwd=str(ROOT), capture_output=True, text=True, timeout=30
+            )
+            report["python_compile"][target] = {
+                "returncode": result.returncode,
+                "stderr": result.stderr[-2000:],
+            }
+        except Exception as exc:
+            report["python_compile"][target] = {"error": compact(exc, 1000)}
+
+    return report
+
+
+def cmd_selfaudit(arg=""):
+    report = self_audit()
+    summary = {
+        "timestamp": report["timestamp"],
+        "root": report["root"],
+        "read_only": report["read_only"],
+        "file_count": len(report.get("files", [])),
+        "key_directories": {
+            key: len(value) for key, value in report.get("directories", {}).items()
+        },
+        "workflow_count": len(report.get("workflows", [])),
+        "git": report.get("git", {}),
+        "tests": {
+            "returncode": report.get("tests", {}).get("returncode"),
+            "error": report.get("tests", {}).get("error"),
+            "stdout_tail": report.get("tests", {}).get("stdout", "")[-6000:],
+            "stderr_tail": report.get("tests", {}).get("stderr", "")[-3000:],
+        },
+        "python_compile": report.get("python_compile", {}),
+    }
+    return json.dumps(summary, ensure_ascii=False, indent=2)[:30000]
 
 
 # ============================================================

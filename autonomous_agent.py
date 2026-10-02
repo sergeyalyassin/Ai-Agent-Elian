@@ -245,10 +245,12 @@ def github(url, method="GET", payload=None):
 
 def process_list_files(**x): return list_files(**x)
 def process_read_file(**x): return read_file(**x)
+def process_self_audit(**x): return base.self_audit()
 
 
 REGISTRY = ToolRegistry()
 REGISTRY.register("list_files", process_list_files, "list workspace files", "low", True, 30)
+REGISTRY.register("self_audit", process_self_audit, "read-only inspect the workspace, Git state, workflows and tests", "low", True, 180)
 REGISTRY.register("read_file", process_read_file, "read a UTF-8 workspace file", "low", True, 30)
 REGISTRY.register("write_file", write_file, "create or replace a workspace file", "high", False, 30)
 REGISTRY.register("delete_file", delete_file, "delete a workspace file or directory", "critical", False, 30)
@@ -503,6 +505,9 @@ def handle_message(text, memory):
 
     if raw.startswith("/cancel "):
         return cancel_task(raw.split(maxsplit=1)[1].strip())
+
+    if any(token in raw.lower() for token in ("تدقيق شامل", "تدقيق عميق", "راجع المستودع", "افحص المستودع", "self audit", "repository audit", "diagnose yourself")):
+        return cmd_selfaudit("")
 
     if raw.startswith("/access"):
         return (

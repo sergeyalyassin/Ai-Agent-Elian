@@ -46,6 +46,12 @@ class AutonomousTests(unittest.TestCase):
     def test_browser_tool_is_registered(self):
         self.assertIn("browser", autonomous.REGISTRY.names())
 
+    def test_self_audit_tool_is_registered(self):
+        self.assertIn("self_audit", autonomous.REGISTRY.names())
+        report = autonomous.process_self_audit()
+        self.assertTrue(report["read_only"])
+        self.assertIn("agent.py", report["files"])
+
     def test_tool_registry_contains_core_tools(self):
         self.assertIn("shell", autonomous.REGISTRY.names())
         self.assertIn("github", autonomous.REGISTRY.names())

@@ -2585,17 +2585,20 @@ def self_audit():
         report["git"]["error"] = compact(exc, 1000)
 
     try:
-        test_env = os.environ.copy()
-        test_env["AGENT_SELF_AUDIT_RUNNING"] = "1"
-        result = subprocess.run(
+        if os.getenv("AGENT_SELF_AUDIT_RUNNING"):
+            report["tests"] = {"skipped": "recursive self-audit guard"}
+        else:
+            test_env = os.environ.copy()
+            test_env["AGENT_SELF_AUDIT_RUNNING"] = "1"
+            result = subprocess.run(
             ["python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
-            cwd=str(ROOT), env=test_env, capture_output=True, text=True, timeout=180
-        )
-        report["tests"] = {
-            "returncode": result.returncode,
-            "stdout": result.stdout[-20000:],
-            "stderr": result.stderr[-10000:],
-        }
+                cwd=str(ROOT), env=test_env, capture_output=True, text=True, timeout=180
+            )
+            report["tests"] = {
+                "returncode": result.returncode,
+                "stdout": result.stdout[-20000:],
+                "stderr": result.stderr[-10000:],
+            }
     except Exception as exc:
         report["tests"] = {"error": compact(exc, 2000)}
 

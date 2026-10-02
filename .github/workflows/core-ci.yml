@@ -1,0 +1,24 @@
+name: Agent Core CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile
+        run: |
+          python -m py_compile agent.py autonomous_agent.py core/tool_registry.py core/agent_loop.py
+      - name: Unit tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v

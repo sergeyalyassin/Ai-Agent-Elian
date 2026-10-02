@@ -5,8 +5,8 @@ from core.policy import ApprovalRequired
 
 class AgentLoop:
     """Checkpointed plan/execute/verify/recover loop with approval pauses."""
-    def __init__(self, *, registry, load_task: Callable[[str], dict | None], update_task: Callable[..., dict | None], plan: Callable[..., dict], verify: Callable[..., bool], max_steps=20, max_replans=3, max_retries=2):
-        self.registry=registry; self.load_task=load_task; self.update_task=update_task; self.plan=plan; self.verify=verify; self.max_steps=max_steps; self.max_replans=max_replans; self.max_retries=max_retries
+    def __init__(self, *, registry, load_task: Callable[[str], dict | None], update_task: Callable[..., dict | None], plan: Callable[..., dict], verify: Callable[..., bool], decide_next: Callable[..., dict | None] | None = None, max_steps=20, max_replans=3, max_retries=2):
+        self.registry=registry; self.load_task=load_task; self.update_task=update_task; self.plan=plan; self.verify=verify; self.decide_next=decide_next; self.max_steps=max_steps; self.max_replans=max_replans; self.max_retries=max_retries
     def _save(self, tid, **changes): return self.update_task(tid, **changes)
     def _result(self,index,step,ok,value=None,error=None,attempts=1):
         return {"step":index,"tool":step.get("tool"),"purpose":step.get("purpose",""),"ok":bool(ok),"attempts":attempts,"at":time.time(),**({"result":value} if value is not None else {}),**({"error":str(error)} if error is not None else {})}
@@ -23,6 +23,7 @@ class AgentLoop:
             task=self.load_task(tid) or task
             if task.get("status") in {"cancelled","awaiting_approval"}: return task
             step=plan_steps[index]; inputs=dict(step.get("input") or {}); previous=json.dumps(results[-6:],ensure_ascii=False)[:16000]
+            spec = self.registry.get(step.get("tool"))
             for k,v in list(inputs.items()):
                 if isinstance(v,str): inputs[k]=v.replace("{{PREVIOUS_RESULTS}}",previous)
             attempts=0; last_error=None; value=None; ok=False
@@ -37,11 +38,25 @@ class AgentLoop:
                     return self.load_task(tid)
                 except Exception as exc:
                     last_error=f"{type(exc).__name__}: {exc}"; value=None
+                # Never blindly repeat a non-idempotent side effect: a timeout or
+                # failed verifier can mean the external action actually succeeded.
+                if not spec.idempotent:
+                    break
                 if attempts<=self.max_retries:
                     self._save(tid,status="recovering",last_error=last_error,current_tool=step.get("tool"),attempts=attempts); time.sleep(min(2**(attempts-1),8))
             item=self._result(index,step,ok,value,last_error if not ok else None,attempts); results.append(item); self._save(tid,results=results,last_step=item,pending_approval=None)
             if ok:
-                index+=1; self._save(tid,status="running",step_index=index,last_error=None); continue
+                index+=1
+                # Adaptive control: after each observation the agent may replace the
+                # next planned action instead of blindly following a stale plan.
+                if self.decide_next:
+                    try:
+                        candidate = self.decide_next(goal, results)
+                        if isinstance(candidate, dict) and candidate.get("tool") in self.registry.names():
+                            plan_steps.insert(index, candidate)
+                    except Exception:
+                        pass
+                self._save(tid,status="running",step_index=index,last_error=None); continue
             if replans>=self.max_replans:
                 self._save(tid,status="failed",step_index=index,error=last_error or "step failed",replans=replans,finished_at=time.time()); return self.load_task(tid)
             replans+=1; self._save(tid,status="replanning",replans=replans,last_error=last_error); new_plan=self.plan(goal,results); plan_steps=list((new_plan or {}).get("steps") or [])[:self.max_steps]

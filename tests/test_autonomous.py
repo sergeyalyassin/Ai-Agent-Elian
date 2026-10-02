@@ -47,3 +47,25 @@ class AutonomousTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_tool_registry_contains_core_tools(self):
+        self.assertIn("shell", autonomous.REGISTRY.names())
+        self.assertIn("github", autonomous.REGISTRY.names())
+        self.assertIn("delete_file", autonomous.REGISTRY.names())
+
+    def test_cancel_task(self):
+        tid = autonomous.new_task("cancel test")
+        self.assertEqual(autonomous.cancel_task(tid), f"تم إلغاء {tid}.")
+        self.assertEqual(autonomous.get_task(tid)["status"], "cancelled")
+
+    def test_verify_returncode(self):
+        self.assertTrue(autonomous.verify_step(
+            {"verify": "returncode_zero", "purpose": "test"},
+            {"returncode": 0},
+            {"goal": "test"}
+        ))
+        self.assertFalse(autonomous.verify_step(
+            {"verify": "returncode_zero", "purpose": "test"},
+            {"returncode": 1},
+            {"goal": "test"}
+        ))

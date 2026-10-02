@@ -28,7 +28,7 @@ MAX_RETRIES = int(os.getenv("AGENT_MAX_RETRIES", "2"))
 FULL_ACCESS = os.getenv("AGENT_FULL_ACCESS", "0") == "1"
 MAX_WORKERS = int(os.getenv("AGENT_MAX_WORKERS", "2"))
 EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="elian-agent")
-RUNNING = set()\n
+RUNNING = set()
 
 def iso():
     return datetime.now(timezone.utc).isoformat()
@@ -455,7 +455,7 @@ def _notify_task(task):
         return
     try:
         base.send(base.CHAT_ID,
-                  f"المهمة {task.get('id')} انتهت.\\nالحالة: {task.get('status')}\\n"
+        base.send(base.CHAT_ID, f"المهمة {task.get('id')} انتهت.\\nالحالة: {task.get('status')}\\n"
                   f"الخطوات: {len(task.get('results') or [])}\\nإعادة التخطيط: {task.get('replans', 0)}")
     except Exception as exc:
         base.log("task notification error: " + str(exc))
@@ -517,8 +517,8 @@ def handle_message(text, memory):
     if raw.startswith("/"):
         return base.process(raw, memory)
 
-    tid = new_task(raw)\n    return submit_task(tid)\n
-
+    tid = new_task(raw)
+    return submit_task(tid)
 def poll():
     if not base.TELEGRAM_TOKEN:
         raise SystemExit("TELEGRAM_TOKEN غير مضبوط")
@@ -527,8 +527,8 @@ def poll():
     offset = None
     base.tg("deleteWebhook", {"drop_pending_updates": "false"}, timeout=30)
     me = base.tg("getMe", timeout=30)
-    base.log("Real Agent polling connected @" + str(me.get("username", "")))\n    resume_recoverable_tasks()\n
-    while True:
+    base.log("Real Agent polling connected @" + str(me.get("username", "")))
+    resume_recoverable_tasks()
         try:
             payload = {"timeout": 50}
             if offset is not None:

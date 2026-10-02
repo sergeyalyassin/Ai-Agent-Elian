@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable
-
+from .policy import ExecutionPolicy
 
 @dataclass(frozen=True)
 class ToolSpec:
@@ -13,12 +13,11 @@ class ToolSpec:
     idempotent: bool = True
     timeout: int = 90
 
-
 class ToolRegistry:
-    """Single registry for planner-visible tools and execution metadata."""
-
-    def __init__(self):
+    """Planner-visible tools with enforced execution policy."""
+    def __init__(self, policy: ExecutionPolicy | None = None):
         self._tools: dict[str, ToolSpec] = {}
+        self.policy = policy or ExecutionPolicy()
 
     def register(self, name: str, handler: Callable[..., Any], description: str,
                  risk: str = "low", idempotent: bool = True, timeout: int = 90):
@@ -35,13 +34,11 @@ class ToolRegistry:
         return list(self._tools)
 
     def schema_text(self) -> str:
-        return "\n".join(
-            f"- {t.name}: {t.description}; risk={t.risk}; idempotent={t.idempotent}; timeout={t.timeout}s"
-            for t in self._tools.values()
-        )
+        return "\\n".join(f"- {t.name}: {t.description}; risk={t.risk}; idempotent={t.idempotent}; timeout={t.timeout}s" for t in self._tools.values())
 
     def execute(self, name: str, inputs: dict[str, Any]) -> Any:
         spec = self.get(name)
         if not isinstance(inputs, dict):
             raise TypeError("tool input must be an object")
+        self.policy.check(spec.name, inputs, spec.risk)
         return spec.handler(**inputs)

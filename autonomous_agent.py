@@ -21,6 +21,11 @@ from core.agent_loop import AgentLoop
 from core.tool_registry import ToolRegistry
 from core.policy import ExecutionPolicy
 from core.decision import adaptive_next_step
+from core.context_manager import ContextManager
+from core.memory_system import MemorySystem
+from core.skill_system import SkillSystem
+from core.model_router import ModelRouter
+from core.scheduler import Scheduler
 
 ROOT = base.ROOT
 STATE_FILE = ROOT / os.getenv("AGENT_STATE_FILE", "task_state.json")
@@ -31,6 +36,9 @@ FULL_ACCESS = os.getenv("AGENT_FULL_ACCESS", "0") == "1"
 MAX_WORKERS = int(os.getenv("AGENT_MAX_WORKERS", "2"))
 EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="elian-agent")
 RUNNING = set()
+CONTEXTS = ContextManager(ROOT / os.getenv("AGENT_CONTEXT_FILE", "context_state.json"))
+SKILL_SYSTEM = SkillSystem(ROOT / "skills")
+MODEL_ROUTER = ModelRouter(base.model_candidates)
 
 def iso():
     return datetime.now(timezone.utc).isoformat()
@@ -52,7 +60,7 @@ def save_state(state):
     base.atomic_write(STATE_FILE, state)
 
 
-def new_task(goal):
+def new_task(goal, conversation_id=None):
     state = load_state()
     tid = f"task-{int(time.time() * 1000)}"
     state["tasks"][tid] = {
@@ -65,8 +73,15 @@ def new_task(goal):
         "replans": 0,
         "created": iso(),
         "updated": iso(),
+        "conversation_id": str(conversation_id) if conversation_id is not None else None,
+        "current_phase": "queued",
+        "evidence": [],
+        "artifacts": {},
+        "messages": [],
     }
     save_state(state)
+    if conversation_id is not None:
+        CONTEXTS.link_task_to_context(tid, str(conversation_id))
     return tid
 
 
@@ -543,10 +558,14 @@ def resume_recoverable_tasks():
         if task.get("status") in {"queued", "planning", "running", "recovering", "replanning"}:
             submit_task(task["id"])
 
-def handle_message(text, memory):
+def handle_message(text, memory, conversation_id=None):
     raw = str(text or "").strip()
     if not raw:
         return "اكتب المهمة."
+
+    if conversation_id is not None:
+        CONTEXTS.get_or_create_context(str(conversation_id))
+        CONTEXTS.add_message(str(conversation_id), str(time.time_ns()))
 
     if raw.startswith("/autostatus"):
         parts = raw.split(maxsplit=1)
@@ -589,7 +608,13 @@ def handle_message(text, memory):
     if raw.startswith("/"):
         return base.process(raw, memory)
 
-    tid = new_task(raw)
+    active = CONTEXTS.get_active_task(str(conversation_id)) if conversation_id is not None else None
+    if active:
+        current = get_task(active)
+        if current and current.get("status") in {"queued","planning","running","recovering","replanning","awaiting_approval"}:
+            update_task(active, messages=(current.get("messages") or [])[-49:] + [{"role":"user","text":raw,"at":iso()}])
+            return f"لديك مهمة نشطة {active} بحالة {current.get("status")}. أضفت رسالتك إلى سياقها؛ استخدم /autostatus لمتابعتها أو /resume بعد توقفها."
+    tid = new_task(raw, conversation_id=conversation_id)
     return submit_task(tid)
 def poll():
     if not base.TELEGRAM_TOKEN:
@@ -616,7 +641,7 @@ def poll():
                 if not text or (base.CHAT_ID and chat_id != base.CHAT_ID):
                     continue
 
-                answer = handle_message(text, memory)
+                answer = handle_message(text, memory, chat_id)
                 memory.conversation(text, answer, text.split()[0][:100])
                 memory.success("message")
                 memory.save()

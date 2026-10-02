@@ -2,23 +2,25 @@ from __future__ import annotations
 import json, time
 from typing import Callable
 from core.policy import ApprovalRequired
+from core.evidence import capture
+from core.recovery_engine import RecoveryEngine
 
 class AgentLoop:
     """Checkpointed plan/execute/verify/recover loop with approval pauses."""
     def __init__(self, *, registry, load_task: Callable[[str], dict | None], update_task: Callable[..., dict | None], plan: Callable[..., dict], verify: Callable[..., bool], decide_next: Callable[..., dict | None] | None = None, max_steps=20, max_replans=3, max_retries=2):
-        self.registry=registry; self.load_task=load_task; self.update_task=update_task; self.plan=plan; self.verify=verify; self.decide_next=decide_next; self.max_steps=max_steps; self.max_replans=max_replans; self.max_retries=max_retries
+        self.registry=registry; self.load_task=load_task; self.update_task=update_task; self.plan=plan; self.verify=verify; self.decide_next=decide_next; self.max_steps=max_steps; self.max_replans=max_replans; self.max_retries=max_retries; self.recovery=RecoveryEngine(max_retries)
     def _save(self, tid, **changes): return self.update_task(tid, **changes)
     def _result(self,index,step,ok,value=None,error=None,attempts=1):
         return {"step":index,"tool":step.get("tool"),"purpose":step.get("purpose",""),"ok":bool(ok),"attempts":attempts,"at":time.time(),**({"result":value} if value is not None else {}),**({"error":str(error)} if error is not None else {})}
     def run(self,tid,goal,*,resume=False):
         task=self.load_task(tid)
         if not task: raise ValueError("task not found")
-        results=list(task.get("results") or []); replans=int(task.get("replans",0)); plan_steps=list(task.get("plan") or []) if resume else []; index=int(task.get("step_index",0)) if resume else 0
+        results=list(task.get("results") or []); replans=int(task.get("replans",0)); plan_steps=list(task.get("plan") or []) if resume else []; index=int(task.get("step_index",0)) if resume else 0; evidence=list(task.get("evidence") or [])
         if not plan_steps:
             self._save(tid,status="planning")
             plan_steps=list((self.plan(goal,results) or {}).get("steps") or [])[:self.max_steps]
             if not plan_steps: raise ValueError("planner returned no executable steps")
-            index=0; self._save(tid,plan=plan_steps,step_index=0,results=results,replans=replans,status="running",started_at=time.time())
+            index=0; self._save(tid,plan=plan_steps,step_index=0,results=results,evidence=evidence,replans=replans,status="running",started_at=time.time())
         while index<len(plan_steps) and len(results)<self.max_steps:
             task=self.load_task(tid) or task
             if task.get("status") in {"cancelled","awaiting_approval"}: return task
@@ -26,7 +28,7 @@ class AgentLoop:
             spec = self.registry.get(step.get("tool"))
             for k,v in list(inputs.items()):
                 if isinstance(v,str): inputs[k]=v.replace("{{PREVIOUS_RESULTS}}",previous)
-            attempts=0; last_error=None; value=None; ok=False
+            attempts=0; last_error=None; value=None; ok=False; started=time.time()
             while attempts<=self.max_retries:
                 attempts+=1
                 try:
@@ -43,8 +45,8 @@ class AgentLoop:
                 if not spec.idempotent:
                     break
                 if attempts<=self.max_retries:
-                    self._save(tid,status="recovering",last_error=last_error,current_tool=step.get("tool"),attempts=attempts); time.sleep(min(2**(attempts-1),8))
-            item=self._result(index,step,ok,value,last_error if not ok else None,attempts); results.append(item); self._save(tid,results=results,last_step=item,pending_approval=None)
+                    self._save(tid,status="recovering",last_error=last_error,current_tool=step.get("tool"),attempts=attempts,error_class=self.recovery.classify(RuntimeError(last_error or "failure"))); self.recovery.sleep(attempts)
+            item=self._result(index,step,ok,value,last_error if not ok else None,attempts); results.append(item); evidence.append(capture(step.get("id",index),step.get("tool"),inputs,value,"success" if ok else "failed",started,last_error if not ok else None,ok)); self._save(tid,results=results,evidence=evidence,last_step=item,pending_approval=None)
             if ok:
                 index+=1
                 # Adaptive control: after each observation the agent may replace the

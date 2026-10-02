@@ -94,6 +94,8 @@ class AgentTests(unittest.TestCase):
 
 
     def test_self_audit_is_read_only_and_reports_workspace(self):
+        if os.getenv("AGENT_SELF_AUDIT_RUNNING"):
+            self.skipTest("self audit is already running the test suite")
         report = agent.self_audit()
         self.assertTrue(report["read_only"])
         self.assertIn("agent.py", report["files"])
@@ -102,6 +104,8 @@ class AgentTests(unittest.TestCase):
         self.assertIn("returncode", report["tests"])
 
     def test_selfaudit_command_returns_evidence(self):
+        if os.getenv("AGENT_SELF_AUDIT_RUNNING"):
+            self.skipTest("self audit is already running the test suite")
         output = agent.cmd_selfaudit()
         self.assertIn('"read_only": true', output)
         self.assertIn('"file_count"', output)

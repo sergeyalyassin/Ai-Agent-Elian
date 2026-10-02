@@ -19,6 +19,6 @@ jobs:
           python-version: "3.11"
       - name: Compile
         run: |
-          python -m py_compile agent.py autonomous_agent.py core/tool_registry.py core/agent_loop.py core/memory.py core/decision.py
+          python -m py_compile agent.py autonomous_agent.py core/tool_registry.py core/agent_loop.py core/memory.py core/decision.py core/context_manager.py core/planning_engine.py core/evidence.py core/verification_engine.py core/recovery_engine.py core/memory_system.py core/skill_system.py core/model_router.py core/scheduler.py tools/tool_router.py
       - name: Unit tests
         run: python -m unittest discover -s tests -p "test_*.py" -v

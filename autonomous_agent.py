@@ -549,11 +549,11 @@ def poll():
                 memory.save()
                 base.send(chat_id, answer)
 
-    except KeyboardInterrupt:
-        break
-    except Exception as exc:
-        base.log("agent poll error: " + base.compact(exc, 1000))
-        time.sleep(4)
+        except KeyboardInterrupt:
+            break
+        except Exception as exc:
+            base.log("agent poll error: " + base.compact(exc, 1000))
+            time.sleep(4)
 
 
 def command_mode():

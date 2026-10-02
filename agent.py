@@ -2514,7 +2514,35 @@ def poll():
 
     memory = Memory()
     offset = None
-    log("AI Personal Agent v6 polling started")
+
+    # Long polling and webhooks are mutually exclusive. Clear any old webhook
+    # before calling getUpdates so a previous webhook cannot block polling.
+    try:
+        webhook = tg("getWebhookInfo", timeout=30) or {}
+        webhook_url = str(webhook.get("url", ""))
+        pending = webhook.get("pending_update_count", 0)
+        log(
+            "Telegram webhook status: "
+            + ("configured" if webhook_url else "none")
+            + "; pending="
+            + str(pending)
+        )
+        tg("deleteWebhook", {"drop_pending_updates": "false"}, timeout=30)
+        log("Telegram webhook cleared; polling is ready")
+    except Exception as exc:
+        raise SystemExit("Telegram startup failed: " + compact(exc, 700))
+
+    try:
+        me = tg("getMe", timeout=30)
+        username = me.get("username") if isinstance(me, dict) else None
+        log("Telegram connection OK" + ((" @" + username) if username else ""))
+    except Exception as exc:
+        raise SystemExit("Telegram API check failed: " + compact(exc, 700))
+
+    log(
+        "AI Personal Agent v6 polling started; "
+        + ("CHAT_ID filter enabled" if CHAT_ID else "CHAT_ID filter disabled")
+    )
 
     while True:
         try:

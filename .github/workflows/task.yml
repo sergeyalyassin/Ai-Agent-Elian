@@ -1,0 +1,48 @@
+name: AI Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "الأمر (مثال: jobs ai)"
+        required: true
+        default: "help"
+  schedule:
+    - cron: "0 7 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run Agent
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          TASK: ${{ github.event.inputs.task || 'help' }}
+          PYTHONIOENCODING: utf-8
+          LANG: C.UTF-8
+          LC_ALL: C.UTF-8
+        run: python agent.py
+      - name: Save Memory
+        if: always()
+        run: |
+          git config user.email "agent@github.com"
+          git config user.name "AI Agent"
+          git add memory.json SKILL.md .model_cooldown.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "memory update [skip ci]"
+          git pull --rebase --autostash 2>/dev/null || true
+          git push 2>/dev/null || true

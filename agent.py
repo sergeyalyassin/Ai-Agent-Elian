@@ -2585,9 +2585,11 @@ def self_audit():
         report["git"]["error"] = compact(exc, 1000)
 
     try:
+        test_env = os.environ.copy()
+        test_env["AGENT_SELF_AUDIT_RUNNING"] = "1"
         result = subprocess.run(
             ["python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
-            cwd=str(ROOT), capture_output=True, text=True, timeout=180
+            cwd=str(ROOT), env=test_env, capture_output=True, text=True, timeout=180
         )
         report["tests"] = {
             "returncode": result.returncode,

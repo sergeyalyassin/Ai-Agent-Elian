@@ -553,6 +553,14 @@ def submit_task(tid):
     EXECUTOR.submit(_run_background, tid)
     return f"بدأت المهمة في الخلفية: {tid}\\nاستخدم /autostatus {tid} لمتابعتها."
 
+SCHEDULER = Scheduler(lambda: list(load_state().get("tasks", {}).values()), submit_task)
+
+def run_due_tasks():
+    try:
+        return SCHEDULER.run_due()
+    except Exception as exc:
+        base.log("scheduler error: " + str(exc)); return []
+
 def resume_recoverable_tasks():
     for task in load_state().get("tasks", {}).values():
         if task.get("status") in {"queued", "planning", "running", "recovering", "replanning"}:
@@ -626,12 +634,14 @@ def poll():
     me = base.tg("getMe", timeout=30)
     base.log("Real Agent polling connected @" + str(me.get("username", "")))
     resume_recoverable_tasks()
+    run_due_tasks()
     while True:
         try:
             payload = {"timeout": 50}
             if offset is not None:
                 payload["offset"] = offset
 
+            run_due_tasks()
             for update in base.tg("getUpdates", payload, timeout=60) or []:
                 offset = update.get("update_id", 0) + 1
                 message = update.get("message") or {}

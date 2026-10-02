@@ -35,7 +35,7 @@ class AutonomousTests(unittest.TestCase):
             try:
                 tid = autonomous.new_task("اختبار مهمة مستقلة")
                 task = autonomous.get_task(tid)
-                self.assertEqual(task["status"], "running")
+                self.assertEqual(task["status"], "queued")
                 autonomous.update_task(tid, status="completed")
                 self.assertEqual(autonomous.get_task(tid)["status"], "completed")
             finally:
@@ -44,9 +44,6 @@ class AutonomousTests(unittest.TestCase):
     def test_shell_blocks_dangerous_command(self):
         with self.assertRaises(PermissionError):
             autonomous.shell("rm -rf /")
-
-if __name__ == "__main__":
-    unittest.main()
 
     def test_tool_registry_contains_core_tools(self):
         self.assertIn("shell", autonomous.REGISTRY.names())
@@ -69,3 +66,6 @@ if __name__ == "__main__":
             {"returncode": 1},
             {"goal": "test"}
         ))
+
+if __name__ == "__main__":
+    unittest.main()

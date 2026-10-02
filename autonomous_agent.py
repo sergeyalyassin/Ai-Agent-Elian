@@ -25,7 +25,9 @@ STATE_FILE = ROOT / os.getenv("AGENT_STATE_FILE", "task_state.json")
 MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "20"))
 MAX_REPLANS = int(os.getenv("AGENT_MAX_REPLANS", "3"))
 MAX_RETRIES = int(os.getenv("AGENT_MAX_RETRIES", "2"))
-FULL_ACCESS = os.getenv("AGENT_FULL_ACCESS", "0") == "1"\nMAX_WORKERS = int(os.getenv("AGENT_MAX_WORKERS", "2"))\nEXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="elian-agent")\nRUNNING = set()\n
+FULL_ACCESS = os.getenv("AGENT_FULL_ACCESS", "0") == "1"
+MAX_WORKERS = int(os.getenv("AGENT_MAX_WORKERS", "2"))\nEXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="elian-agent")
+RUNNING = set()\n
 
 def iso():
     return datetime.now(timezone.utc).isoformat()
@@ -252,7 +254,9 @@ REGISTRY.register("delete_file", delete_file, "delete a workspace file or direct
 REGISTRY.register("copy_file", copy_file, "copy a workspace file or directory", "medium", True, 30)
 REGISTRY.register("move_file", move_file, "move a workspace file or directory", "high", False, 30)
 REGISTRY.register("web_search", web_search, "search the public web", "low", True, 30)
-REGISTRY.register("open_url", open_url, "fetch and extract a public web page", "low", True, 45)\nREGISTRY.register("browser", browser, "control a Chromium browser: open, click, fill, press, snapshot, screenshot, close", "high", False, 60)\nREGISTRY.register("shell", shell, "execute an OS shell command in the workspace", "critical", False, 120)
+REGISTRY.register("open_url", open_url, "fetch and extract a public web page", "low", True, 45)
+REGISTRY.register("browser", browser, "control a Chromium browser: open, click, fill, press, snapshot, screenshot, close", "high", False, 60)
+REGISTRY.register("shell", shell, "execute an OS shell command in the workspace", "critical", False, 120)
 REGISTRY.register("python", python_exec, "execute Python code", "critical", False, 120)
 REGISTRY.register("git", git, "inspect or modify the Git repository", "high", False, 180)
 REGISTRY.register("github", github, "call the GitHub REST API using the workflow token", "high", False, 45)

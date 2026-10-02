@@ -621,7 +621,7 @@ def handle_message(text, memory, conversation_id=None):
         current = get_task(active)
         if current and current.get("status") in {"queued","planning","running","recovering","replanning","awaiting_approval"}:
             update_task(active, messages=(current.get("messages") or [])[-49:] + [{"role":"user","text":raw,"at":iso()}])
-            return f"لديك مهمة نشطة {active} بحالة {current.get("status")}. أضفت رسالتك إلى سياقها؛ استخدم /autostatus لمتابعتها أو /resume بعد توقفها."
+            return f"لديك مهمة نشطة {active} بحالة {current.get('status')}. أضفت رسالتك إلى سياقها؛ استخدم /autostatus لمتابعتها أو /resume بعد توقفها."
     tid = new_task(raw, conversation_id=conversation_id)
     return submit_task(tid)
 def poll():

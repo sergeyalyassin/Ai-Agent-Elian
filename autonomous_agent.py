@@ -11,6 +11,7 @@ import subprocess
 import time
 import traceback
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,9 @@ MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "20"))
 MAX_REPLANS = int(os.getenv("AGENT_MAX_REPLANS", "3"))
 MAX_RETRIES = int(os.getenv("AGENT_MAX_RETRIES", "2"))
 FULL_ACCESS = os.getenv("AGENT_FULL_ACCESS", "0") == "1"
-
+MAX_WORKERS = int(os.getenv("AGENT_MAX_WORKERS", "2"))
+EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="elian-agent")
+RUNNING = set()
 
 def iso():
     return datetime.now(timezone.utc).isoformat()
@@ -159,6 +162,17 @@ def open_url(url):
     return {"url": url, "text": base.strip_html(base.fetch(url, max_size=900000))[:50000]}
 
 
+def browser(action, **kwargs):
+    """Real browser automation through optional Playwright/Chromium."""
+    try:
+        from tools import browser as browser_module
+    except ImportError as exc:
+        raise RuntimeError("Playwright/browser module غير متاح") from exc
+    fn = getattr(browser_module, "browser_" + str(action), None)
+    if not fn:
+        raise ValueError("Browser action غير معروفة: " + str(action))
+    return fn(**kwargs)
+
 def shell(command, timeout=120):
     command = str(command).strip()
     if not command:
@@ -242,6 +256,7 @@ REGISTRY.register("copy_file", copy_file, "copy a workspace file or directory", 
 REGISTRY.register("move_file", move_file, "move a workspace file or directory", "high", False, 30)
 REGISTRY.register("web_search", web_search, "search the public web", "low", True, 30)
 REGISTRY.register("open_url", open_url, "fetch and extract a public web page", "low", True, 45)
+REGISTRY.register("browser", browser, "control a Chromium browser: open, click, fill, press, snapshot, screenshot, close", "high", False, 60)
 REGISTRY.register("shell", shell, "execute an OS shell command in the workspace", "critical", False, 120)
 REGISTRY.register("python", python_exec, "execute Python code", "critical", False, 120)
 REGISTRY.register("git", git, "inspect or modify the Git repository", "high", False, 180)
@@ -435,6 +450,45 @@ def task_status(tid=None):
     )
 
 
+def _notify_task(task):
+    if not task or not base.TELEGRAM_TOKEN or not base.CHAT_ID:
+        return
+    try:
+        base.send(base.CHAT_ID, f"المهمة {task.get('id')} انتهت.\\nالحالة: {task.get('status')}\\n"
+                  f"الخطوات: {len(task.get('results') or [])}\\nإعادة التخطيط: {task.get('replans', 0)}")
+    except Exception as exc:
+        base.log("task notification error: " + str(exc))
+
+def _run_background(tid):
+    if tid in RUNNING:
+        return
+    RUNNING.add(tid)
+    try:
+        result = run_goal(get_task(tid)["goal"], resume_id=tid)
+        _notify_task(get_task(tid))
+        return result
+    except Exception as exc:
+        update_task(tid, status="failed", error=str(exc),
+                    traceback=traceback.format_exc()[-8000:])
+        _notify_task(get_task(tid))
+    finally:
+        RUNNING.discard(tid)
+
+def submit_task(tid):
+    task = get_task(tid)
+    if not task:
+        return "المهمة غير موجودة."
+    if tid in RUNNING:
+        return "المهمة تعمل بالفعل: " + tid
+    update_task(tid, status="queued")
+    EXECUTOR.submit(_run_background, tid)
+    return f"بدأت المهمة في الخلفية: {tid}\\nاستخدم /autostatus {tid} لمتابعتها."
+
+def resume_recoverable_tasks():
+    for task in load_state().get("tasks", {}).values():
+        if task.get("status") in {"queued", "planning", "running", "recovering", "replanning"}:
+            submit_task(task["id"])
+
 def handle_message(text, memory):
     raw = str(text or "").strip()
     if not raw:
@@ -462,9 +516,8 @@ def handle_message(text, memory):
     if raw.startswith("/"):
         return base.process(raw, memory)
 
-    return run_goal(raw)
-
-
+    tid = new_task(raw)
+    return submit_task(tid)
 def poll():
     if not base.TELEGRAM_TOKEN:
         raise SystemExit("TELEGRAM_TOKEN غير مضبوط")
@@ -474,7 +527,7 @@ def poll():
     base.tg("deleteWebhook", {"drop_pending_updates": "false"}, timeout=30)
     me = base.tg("getMe", timeout=30)
     base.log("Real Agent polling connected @" + str(me.get("username", "")))
-
+    resume_recoverable_tasks()
     while True:
         try:
             payload = {"timeout": 50}

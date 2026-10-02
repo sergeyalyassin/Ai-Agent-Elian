@@ -1,4 +1,3 @@
-```python
 import importlib.util
 import os
 import tempfile
@@ -45,7 +44,7 @@ class AgentTests(unittest.TestCase):
             agent.CHAT_ID = ""
             os.environ["TASK"] = "ping"
             try:
-                agent.command()
+                agent.command_mode()
                 self.assertTrue(agent.MEMORY_FILE.exists())
             finally:
                 agent.ROOT = original_root

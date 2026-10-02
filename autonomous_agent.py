@@ -454,7 +454,6 @@ def _notify_task(task):
     if not task or not base.TELEGRAM_TOKEN or not base.CHAT_ID:
         return
     try:
-        base.send(base.CHAT_ID,
         base.send(base.CHAT_ID, f"المهمة {task.get('id')} انتهت.\\nالحالة: {task.get('status')}\\n"
                   f"الخطوات: {len(task.get('results') or [])}\\nإعادة التخطيط: {task.get('replans', 0)}")
     except Exception as exc:

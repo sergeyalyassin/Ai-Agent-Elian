@@ -1,4 +1,3 @@
-```python
 import importlib.util
 import os
 import tempfile

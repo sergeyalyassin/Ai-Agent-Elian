@@ -2514,7 +2514,17 @@ def poll():
 
     memory = Memory()
     offset = None
+
+    # Polling and webhooks cannot be used at the same time. If a webhook
+    # was configured previously, remove it before starting long polling.
+    try:
+        tg("deleteWebhook", {"drop_pending_updates": "false"}, timeout=30)
+        log("Telegram webhook cleared; polling is active")
+    except Exception as exc:
+        log("Telegram webhook cleanup failed: " + compact(exc, 500))
+
     log("AI Personal Agent v6 polling started")
+    log("CHAT_ID filter: " + (CHAT_ID if CHAT_ID else "disabled"))
 
     while True:
         try:

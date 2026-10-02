@@ -47,6 +47,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
+from core.memory import PersistentMemory
+
 
 # ============================================================
 # Config
@@ -55,6 +57,7 @@ from typing import Any
 ROOT = Path(os.getenv("AGENT_ROOT", Path(__file__).resolve().parent)).resolve()
 
 MEMORY_FILE = ROOT / os.getenv("AGENT_MEMORY_FILE", "memory.json")
+MEMORY_DB_FILE = ROOT / os.getenv("AGENT_MEMORY_DB_FILE", "memory.sqlite3")
 COOLDOWN_FILE = ROOT / os.getenv("AGENT_COOLDOWN_FILE", ".model_cooldown.json")
 TASKS_FILE = ROOT / os.getenv("AGENT_TASKS_FILE", "tasks.json")
 SAVED_FILE = ROOT / os.getenv("AGENT_SAVED_FILE", "saved_items.json")
@@ -283,6 +286,13 @@ class Memory:
         self.data["stats"].setdefault("success", 0)
         self.data["stats"].setdefault("failure", 0)
         self.data["stats"].setdefault("commands", {})
+        self.store = PersistentMemory(MEMORY_DB_FILE)
+        # Migrate legacy notes once; INSERT OR REPLACE makes this idempotent.
+        for _entry in self.data.get("notes", []):
+            try:
+                self.store.add(_entry.get("kind", "note"), _entry.get("text", ""), _entry.get("tags", []), source="legacy-json")
+            except Exception:
+                pass
 
     def save(self):
         self.data["last_updated"] = iso()
@@ -302,6 +312,11 @@ class Memory:
                 "agent": str(answer)[:5000]
             }
         )
+        try:
+            self.store.add("conversation", f"User: {str(user)[:1500]}\\nAgent: {str(answer)[:5000]}",
+                            [str(command)[:80]], importance=0.35, source="telegram")
+        except Exception:
+            pass
         self.data["conversations"] = self.data["conversations"][-MAX_HISTORY:]
         self.data["stats"]["runs"] += 1
 
@@ -325,6 +340,10 @@ class Memory:
             }
         )
         self.data["errors"] = self.data["errors"][-MAX_HISTORY:]
+        try:
+            self.store.add("error", compact(err, 4000), [str(command)[:80]], importance=0.65, source="runtime")
+        except Exception:
+            pass
 
     def remember(self, kind, text, tags=None):
         entry = {
@@ -336,28 +355,30 @@ class Memory:
         }
         self.data["notes"].append(entry)
         self.data["notes"] = self.data["notes"][-MAX_MEMORY_NOTES:]
+        try:
+            self.store.add(kind, entry["text"], entry["tags"], importance=0.75, source="explicit")
+        except Exception:
+            pass
         self.save()
         return entry
 
     def recall(self, query, limit=8):
+        try:
+            durable = self.store.search(query, limit=limit)
+        except Exception:
+            durable = []
+        # Keep project/legacy records available while durable memory grows.
         words = {x.lower() for x in re.findall(r"\w+", str(query))}
-        if not words:
-            return []
-
         matches = []
         for entry in self.data.get("notes", []) + self.data.get("projects", []):
-            haystack = " ".join(
-                (
-                    entry.get("text", ""),
-                    " ".join(map(str, entry.get("tags", [])))
-                )
-            ).lower()
+            haystack = " ".join((entry.get("text", ""), " ".join(map(str, entry.get("tags", []))))).lower()
             score = sum(word in haystack for word in words)
             if score:
                 matches.append((score, entry))
-
         matches.sort(key=lambda item: item[0], reverse=True)
-        return [entry for _, entry in matches[:limit]]
+        legacy = [entry for _, entry in matches[:limit]]
+        seen = {str(x.get("text", "")) for x in durable}
+        return durable + [x for x in legacy if str(x.get("text", "")) not in seen][:max(0, limit-len(durable))]
 
     def context(self, query, limit=5):
         entries = self.recall(query, limit)
